@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const http = require('http');
 const { Server } = require("socket.io");
@@ -28,29 +29,29 @@ const COMMODITIES = [
 const TARGET_NET_WORTH = 30000;
 
 const TEAMS_CONFIG = [
-    { id: "usa", name: "USA", password: "usa",
+    { id: "usa", name: "USA", password: process.env.PASSWORD_USA,
       startHoldings: { "Gold": 2, "Platinum": 3, "Oil": 3, "Copper": 2 } },
-    { id: "china", name: "China", password: "china",
+    { id: "china", name: "China", password: process.env.PASSWORD_CHINA,
       startHoldings: { "Rare Earth": 5, "Copper": 4, "Silver": 2, "Agri": 3 } },
-    { id: "india", name: "India", password: "india",
+    { id: "india", name: "India", password: process.env.PASSWORD_INDIA,
       startHoldings: { "Agri": 5, "Livestock": 2, "Silver": 2, "Copper": 2 } },
-    { id: "saudi", name: "Saudi Arabia", password: "saudi",
+    { id: "saudi", name: "Saudi Arabia", password: process.env.PASSWORD_SAUDI,
       startHoldings: { "Oil": 6, "Gold": 2 } },
-    { id: "uk", name: "UK", password: "uk",
+    { id: "uk", name: "UK", password: process.env.PASSWORD_UK,
       startHoldings: { "Gold": 3, "Platinum": 2, "Silver": 2 } },
-    { id: "germany", name: "Germany", password: "germany",
+    { id: "germany", name: "Germany", password: process.env.PASSWORD_GERMANY,
       startHoldings: { "Silver": 3, "Copper": 3, "Platinum": 2 } },
-    { id: "japan", name: "Japan", password: "japan",
+    { id: "japan", name: "Japan", password: process.env.PASSWORD_JAPAN,
       startHoldings: { "Copper": 4, "Rare Earth": 2, "Silver": 2 } },
-    { id: "russia", name: "Russia", password: "russia",
+    { id: "russia", name: "Russia", password: process.env.PASSWORD_RUSSIA,
       startHoldings: { "Oil": 5, "Gold": 2, "Rare Earth": 2 } },
-    { id: "brazil", name: "Brazil", password: "brazil",
+    { id: "brazil", name: "Brazil", password: process.env.PASSWORD_BRAZIL,
       startHoldings: { "Livestock": 4, "Agri": 3, "Copper": 2 } },
-    { id: "france", name: "France", password: "france",
+    { id: "france", name: "France", password: process.env.PASSWORD_FRANCE,
       startHoldings: { "Gold": 3, "Agri": 2, "Livestock": 2 } },
-    { id: "uae", name: "UAE", password: "uae",
+    { id: "uae", name: "UAE", password: process.env.PASSWORD_UAE,
       startHoldings: { "Oil": 4, "Gold": 3 } },
-    { id: "australia", name: "Australia", password: "aus",
+    { id: "australia", name: "Australia", password: process.env.PASSWORD_AUSTRALIA,
       startHoldings: { "Rare Earth": 3, "Gold": 2, "Livestock": 2, "Copper": 2 } },
 ];
 
@@ -326,6 +327,16 @@ io.on('connection', (socket) => {
         }
     });
 
+    socket.on('request_admin_login', ({ password }) => {
+        if (password === process.env.ADMIN_PASSWORD) {
+            socket.isAdmin = true;
+            socket.emit('admin_login_approved');
+            socket.emit('update_admin_state', JSON.parse(JSON.stringify(gameState)));
+        } else {
+            socket.emit('error', 'ACCESS DENIED: INCORRECT CREDENTIALS');
+        }
+    });
+
     socket.on('trade', ({ teamId, commodityName, quantity, type }) => {
         if (!gameState.marketOpen) return;
 
@@ -419,6 +430,10 @@ io.on('connection', (socket) => {
 
     // --- ADMIN ACTIONS ---
     socket.on('admin_action', (action) => {
+        if (!socket.isAdmin) {
+            socket.emit('error', 'ACCESS DENIED: Not authenticated as admin');
+            return;
+        }
         switch (action.type) {
             case 'OPEN_MARKET':
                 gameState.marketOpen = true;

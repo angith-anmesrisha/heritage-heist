@@ -5,7 +5,6 @@ import { TrendingUp, TrendingDown, AlertTriangle, ShieldCheck, Lock, LogOut, Rot
 const socket = io('http://localhost:3001');
 
 // --- CONFIGURATION ---
-const ADMIN_PASSWORD = "Angi@Ecell2026";
 
 // --- SPARKLINE COMPONENT ---
 function Sparkline({ data, width = 120, height = 32 }) {
@@ -209,6 +208,10 @@ function App() {
       setView('dashboard');
     });
 
+    socket.on('admin_login_approved', () => {
+      setView('admin');
+    });
+
     socket.on('update_state', (state) => setGameState(state));
     socket.on('update_admin_state', (state) => setAdminState(state));
     socket.on('game_reset', (data) => {
@@ -230,13 +233,12 @@ function App() {
   };
 
   const handleAdminLogin = () => {
-    if (adminPassInput === ADMIN_PASSWORD) {
-      setView('admin');
-      setAdminPassInput('');
-    } else {
-      alert("ACCESS DENIED: INCORRECT CREDENTIALS");
-      setAdminPassInput('');
+    if (!adminPassInput) {
+      alert("Please enter the admin passcode");
+      return;
     }
+    socket.emit('request_admin_login', { password: adminPassInput });
+    setAdminPassInput('');
   };
 
   const handleLogout = () => {
