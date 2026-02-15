@@ -687,15 +687,6 @@ function App() {
                   <TrendingDown size={18} /> SELL {sellQty > 1 ? `x${sellQty}` : ''}
                 </button>
               </div>
-
-              <div className="mt-4 pt-4 border-t border-gray-800 flex justify-between items-center opacity-60 hover:opacity-100 transition-opacity">
-                <span className="text-[10px] text-gray-500 uppercase tracking-widest">Phase Limits</span>
-                <div className="flex gap-1">
-                  {[...Array(5)].map((_, i) => (
-                    <div key={i} className={`h-1.5 w-4 rounded-full transition-colors ${i < (myTeam.trades_this_phase[comm.name] || 0) ? 'bg-blue-500' : 'bg-gray-800'}`}></div>
-                  ))}
-                </div>
-              </div>
             </div>
           );
         })}

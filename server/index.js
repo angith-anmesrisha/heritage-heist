@@ -138,8 +138,7 @@ function resetGame() {
             id: t.id,
             name: t.name,
             cash: 0, // will be set in step 4
-            portfolio: {},
-            trades_this_phase: {}
+            portfolio: {}
         };
         COMMODITIES.forEach(c => gameState.teams[t.id].portfolio[c.name] = 0);
 
@@ -348,13 +347,6 @@ io.on('connection', (socket) => {
         // Validate quantity (1-10)
         quantity = Math.max(1, Math.min(10, Math.floor(quantity || 1)));
 
-        // Trade Limits: 5 trades per commodity per phase
-        if (!team.trades_this_phase[commodityName]) team.trades_this_phase[commodityName] = 0;
-        if (team.trades_this_phase[commodityName] >= 5) {
-            socket.emit('error', 'Limit Reached: Max 5 trades per commodity this phase!');
-            return;
-        }
-
         if (type === 'BUY') {
             if (market.available < quantity) {
                 socket.emit('error', `Only ${market.available} units available!`);
@@ -375,7 +367,6 @@ io.on('connection', (socket) => {
             team.cash -= cost;
             team.portfolio[commodityName] += quantity;
             market.available -= quantity;
-            team.trades_this_phase[commodityName]++;
 
             // Track volume for sentiment display
             gameState.orderPressure[commodityName].buyVolume += quantity;
@@ -407,7 +398,6 @@ io.on('connection', (socket) => {
             team.cash += revenue;
             team.portfolio[commodityName] -= quantity;
             market.available += quantity;
-            team.trades_this_phase[commodityName]++;
 
             // Track volume for sentiment display
             gameState.orderPressure[commodityName].sellVolume += quantity;
@@ -437,7 +427,6 @@ io.on('connection', (socket) => {
         switch (action.type) {
             case 'OPEN_MARKET':
                 gameState.marketOpen = true;
-                Object.values(gameState.teams).forEach(t => t.trades_this_phase = {});
                 startTickTimer();
                 break;
             case 'CLOSE_MARKET':
