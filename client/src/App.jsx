@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
 import { TrendingUp, TrendingDown, AlertTriangle, ShieldCheck, Lock, LogOut, RotateCcw, Eye, Newspaper, Minus, Plus, BarChart3, Zap, Send, Megaphone, X } from 'lucide-react';
 
-const socket = io('http://localhost:3001');
+const socket = io(import.meta.env.VITE_SERVER_URL);
 
 // --- CONFIGURATION ---
 
