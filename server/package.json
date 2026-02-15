@@ -5,6 +5,12 @@
   "main": "index.js",
   "scripts": {
     "dev": "nodemon index.js",
+    "start": "node index.js",
+    "pm2:start": "pm2 start ecosystem.config.js",
+    "pm2:stop": "pm2 stop heritage-heist-server",
+    "pm2:restart": "pm2 restart heritage-heist-server",
+    "pm2:logs": "pm2 logs heritage-heist-server",
+    "pm2:status": "pm2 status",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
