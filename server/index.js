@@ -12,29 +12,27 @@ const io = new Server(server, {
 });
 
 // --- 1. GAME CONFIGURATION ---
-// UPDATED COMMODITIES LIST (Tech Removed; 4 New Added)
 const COMMODITIES = [
     { name: "Gold", price: 2000, total_supply: 50, available: 50 },
-    { name: "Platinum", price: 2800, total_supply: 40, available: 40 }, // New: High Value
+    { name: "Platinum", price: 2800, total_supply: 40, available: 40 }, 
     { name: "Oil", price: 800, total_supply: 100, available: 100 },
-    { name: "Silver", price: 1200, total_supply: 80, available: 80 },   // New: Mid Value
-    { name: "Copper", price: 400, total_supply: 150, available: 150 },  // New: Industrial
+    { name: "Silver", price: 1200, total_supply: 80, available: 80 },   
+    { name: "Copper", price: 400, total_supply: 150, available: 150 }, 
     { name: "Agri", price: 500, total_supply: 200, available: 200 },
-    { name: "Livestock", price: 600, total_supply: 150, available: 150 }, // New: Agri-adjacent
+    { name: "Livestock", price: 600, total_supply: 150, available: 150 },
     { name: "Rare Earth", price: 3000, total_supply: 30, available: 30 },
 ];
 
 const TEAMS_CONFIG = [
-    // Tech teams reassigned to new commodities
-    { id: "usa", name: "USA", special: "Platinum", password: "usa" },     // Was Tech
+    { id: "usa", name: "USA", special: "Platinum", password: "usa" },     
     { id: "china", name: "China", special: "Rare Earth", password: "china" },
     { id: "india", name: "India", special: "Agri", password: "india" },
     { id: "saudi", name: "Saudi Arabia", special: "Oil", password: "saudi" },
     { id: "uk", name: "UK", special: "Gold", password: "uk" },
-    { id: "germany", name: "Germany", special: "Silver", password: "germany" }, // Was Tech
-    { id: "japan", name: "Japan", special: "Copper", password: "japan" },     // Was Tech
+    { id: "germany", name: "Germany", special: "Silver", password: "germany" }, 
+    { id: "japan", name: "Japan", special: "Copper", password: "japan" },     
     { id: "russia", name: "Russia", special: "Oil", password: "russia" },
-    { id: "brazil", name: "Brazil", special: "Livestock", password: "brazil" }, // Was Agri
+    { id: "brazil", name: "Brazil", special: "Livestock", password: "brazil" }, 
     { id: "france", name: "France", special: "Gold", password: "france" },
     { id: "uae", name: "UAE", special: "Oil", password: "uae" },
     { id: "australia", name: "Australia", special: "Rare Earth", password: "aus" },
@@ -67,7 +65,6 @@ function resetGame() {
             portfolio: {},
             trades_this_phase: {} 
         };
-        // Initialize portfolio for ALL commodities
         COMMODITIES.forEach(c => gameState.teams[t.id].portfolio[c.name] = 0);
     });
     console.log("GAME RESET TRIGGERED");
@@ -116,23 +113,43 @@ io.on('connection', (socket) => {
             return;
         }
 
+        // --- DYNAMIC PRICING CONFIGURATION ---
+        const VOLATILITY = 0.02; // Price changes by 2% per trade unit
+
         if (type === 'BUY') {
             const cost = market.price * quantity;
             if (team.cash < cost) { socket.emit('error', 'Insufficient Funds'); return; }
             if ((team.portfolio[commodityName] + quantity) > (market.total_supply * 0.40)) { socket.emit('error', 'Anti-Monopoly Rule: >40% Supply'); return; }
             if ((team.portfolio[commodityName] * market.price + cost) > (6000)) { socket.emit('error', 'Risk Mgmt: Max 60% capital rule'); return; }
 
+            // EXECUTE BUY
             team.cash -= cost;
             team.portfolio[commodityName] += quantity;
             market.available -= quantity;
             team.trades_this_phase[commodityName]++;
+
+            // === DYNAMIC PRICE INCREASE ===
+            // For every unit bought, price goes UP
+            // Logic: NewPrice = OldPrice * (1 + (0.02 * quantity))
+            market.price = Math.floor(market.price * (1 + (VOLATILITY * quantity)));
+
         } else if (type === 'SELL') {
             if (team.portfolio[commodityName] < quantity) { socket.emit('error', 'Not enough units'); return; }
+            
+            // EXECUTE SELL
             const revenue = market.price * quantity;
             team.cash += revenue;
             team.portfolio[commodityName] -= quantity;
             market.available += quantity;
             team.trades_this_phase[commodityName]++;
+
+            // === DYNAMIC PRICE DECREASE ===
+            // For every unit sold, price goes DOWN
+            // Logic: NewPrice = OldPrice * (1 - (0.02 * quantity))
+            market.price = Math.floor(market.price * (1 - (VOLATILITY * quantity)));
+            
+            // Safety: Price cannot go below ₹1
+            if(market.price < 1) market.price = 1;
         }
 
         io.emit('update_state', sanitizeStateForPlayer(gameState));
