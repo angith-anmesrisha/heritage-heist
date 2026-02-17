@@ -6,28 +6,108 @@ const socket = io(import.meta.env.VITE_SERVER_URL);
 
 // --- CONFIGURATION ---
 
-// --- SPARKLINE COMPONENT ---
-function Sparkline({ data, width = 120, height = 32 }) {
-  if (!data || data.length < 2) return null;
+
+// --- PRICE CHART COMPONENT ---
+function PriceChart({ data, width = 300, height = 100, timeframeTicks }) {
+  if (!data || data.length < 2) return (
+    <div className="flex items-center justify-center text-gray-600 text-xs font-mono border border-dashed border-gray-800 rounded" style={{ width, height }}>
+      WAITING FOR DATA...
+    </div>
+  );
+
   const min = Math.min(...data);
   const max = Math.max(...data);
   const range = max - min || 1;
-  const stepX = width / (data.length - 1);
+  
+  // Chart dimensions
+  const chartH = height - 20; // reserve 20px for x-axis labels
+  const chartW = width;
 
-  const points = data.map((v, i) => `${i * stepX},${height - ((v - min) / range) * (height - 4) - 2}`).join(' ');
+  const stepX = chartW / (data.length - 1);
+
+  // Generate path
+  const points = data.map((v, i) => {
+    const x = i * stepX;
+    // Invert Y: 0 is top, height is bottom
+    const y = chartH - ((v - min) / range) * chartH; 
+    return `${x},${y}`;
+  }).join(' ');
+
   const lastPrice = data[data.length - 1];
   const prevPrice = data[data.length - 2];
-  const color = lastPrice >= prevPrice ? '#10b981' : '#ef4444';
+  const color = lastPrice >= prevPrice ? '#10b981' : '#ef4444'; // emerald or red
+
+  // Generate X-Axis Time Labels
+  // We want to show labels at specific intervals: 1m, 5m, 15m, 30m, 1h ago from NOW (right side)
+  const labels = [];
+  
+  // Define possible label points (ticks back from present)
+  const potentialLabels = [
+    { text: 'Now', ticks: 0 },
+    { text: '1m', ticks: 20 },
+    { text: '5m', ticks: 100 },
+    { text: '15m', ticks: 300 },
+    { text: '30m', ticks: 600 },
+    { text: '1h', ticks: 1200 },
+    { text: '2h', ticks: 2400 },
+    { text: '3h', ticks: 3600 }
+  ];
+
+  potentialLabels.forEach(l => {
+     // Calculate where this label falls on the X-axis (0 to chartW)
+     // If we are showing 'timeframeTicks' total history (e.g. 100 ticks for 5m view)
+     // The 'Now' label is at x = chartW (index = length-1)
+     // The '1m' label is at index = length-1 - 20
+     
+     // Only show label if it is within the current visible timeframe
+     if (l.ticks <= timeframeTicks) {
+        const xPos = chartW - (l.ticks / timeframeTicks) * chartW;
+        labels.push({ x: xPos, text: l.text });
+     }
+  });
 
   return (
-    <svg width={width} height={height} className="inline-block">
-      <polyline fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" points={points} />
-      <circle cx={(data.length - 1) * stepX} cy={height - ((lastPrice - min) / range) * (height - 4) - 2} r="2" fill={color} />
-    </svg>
+    <div className="relative select-none" style={{ width, height }}>
+      
+      {/* Chart Area */}
+      <svg width={width} height={height} className="overflow-visible">
+        {/* Background Grid */}
+        <line x1="0" y1="0" x2={width} y2="0" stroke="#374151" strokeWidth="1" strokeDasharray="4 4" opacity="0.3" />
+        <line x1="0" y1={chartH} x2={width} y2={chartH} stroke="#374151" strokeWidth="1" strokeDasharray="4 4" opacity="0.3" />
+        
+        {/* X-Axis Labels & Vertical Grid Lines */}
+        {labels.map((l, i) => (
+          <g key={i} transform={`translate(${l.x}, 0)`}>
+            <line y1="0" y2={chartH} stroke="#374151" strokeWidth="1" strokeDasharray="2 2" opacity="0.2" />
+            <text x="0" y={chartH + 12} textAnchor="middle" fill="#6B7280" fontSize="9" fontWeight="bold" style={{textShadow: '0px 0px 2px black'}}>{l.text}</text>
+          </g>
+        ))}
+
+        {/* The Data Line */}
+        <polyline 
+            fill="none" 
+            stroke={color} 
+            strokeWidth="2" 
+            strokeLinecap="round" 
+            strokeLinejoin="round" 
+            points={points} 
+            vectorEffect="non-scaling-stroke"
+            filter="drop-shadow(0px 0px 4px rgba(0,0,0,0.5))"
+        />
+        
+        {/* Current Price Dot */}
+        <circle cx={chartW} cy={chartH - ((lastPrice - min) / range) * chartH} r="3" fill={color} stroke="white" strokeWidth="1" />
+      </svg>
+
+      {/* Y-Axis Price Labels (Overlay) */}
+      <div className="absolute right-1 top-0 text-[10px] font-mono font-bold text-gray-400 bg-black/60 px-1 rounded">{max.toLocaleString()}</div>
+      <div className="absolute right-1 bottom-[20px] text-[10px] font-mono font-bold text-gray-400 bg-black/60 px-1 rounded">{min.toLocaleString()}</div>
+    </div>
   );
 }
 
 // --- PRICE CHANGE BADGES (1min = 20 ticks, 5min = 100 ticks) ---
+
 function PriceChangeBadge({ current, previous, label }) {
   if (previous == null || current == null) return null;
   const pctChange = ((current - previous) / previous) * 100;
@@ -197,8 +277,29 @@ function App() {
   const [gameState, setGameState] = useState(null);
   const [adminState, setAdminState] = useState(null);
   const [config, setConfig] = useState([]);
+  const [chartTimeframe, setChartTimeframe] = useState(20); // Default 1m (20 ticks)
+  const [warningMessage, setWarningMessage] = useState(null); // { message: string, type: 'trial' | 'admin', expiresAt: number }
+  const [now, setNow] = useState(Date.now());
+
+  // Update 'now' every second to force re-render for countdowns
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Clear expired warnings automatically (for admin alerts)
+  useEffect(() => {
+    if (warningMessage && warningMessage.expiresAt && warningMessage.type !== 'trial') {
+       if (now > warningMessage.expiresAt) {
+          setWarningMessage(null);
+       }
+    }
+    // For trial, we don't clear automatically here because we want the persistent overlay logic
+    // actually, let's just use the overlay logic to decide what to show
+  }, [now, warningMessage]);
 
   useEffect(() => {
+
     socket.on('init', (data) => {
       setConfig(data.config);
       setGameState(data.state);
@@ -212,7 +313,25 @@ function App() {
       setView('admin');
     });
 
+    socket.on('trial_warning', ({ message, duration }) => {
+       const audio = new Audio('/trial_siren.mp3'); 
+       audio.play().catch(e => console.log("Audio play failed", e));
+       
+       // Set warning message with expiration time
+       const expiresAt = Date.now() + duration;
+       setWarningMessage({ message, type: 'trial', expiresAt });
+    });
+
+    socket.on('admin_alert', ({ team, message }) => {
+       const audio = new Audio('/admin_alert.mp3'); 
+       audio.play().catch(e => console.log("Audio play failed", e));
+       // Admin alerts still clear after 5s or when acknowledged
+       setWarningMessage({ message: `⚠️ ${message}`, type: 'admin', expiresAt: Date.now() + 5000 });
+    });
+
     socket.on('update_state', (state) => setGameState(state));
+
+
     socket.on('update_admin_state', (state) => setAdminState(state));
     socket.on('game_reset', (data) => {
       setConfig(data.config);
@@ -264,7 +383,43 @@ function App() {
     </div>
   );
 
+  const warningOverlay = warningMessage && (warningMessage.type !== 'trial' || now < warningMessage.expiresAt) ? (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center">
+      {/* Flashing Background */}
+      <div className="absolute inset-0 bg-yellow-900/90 animate-pulse backdrop-blur-md"></div>
+      
+      {/* Warning Content */}
+      <div className="relative bg-black border-4 border-yellow-500 rounded-2xl p-8 max-w-2xl text-center shadow-[0_0_100px_rgba(234,179,8,0.5)] animate-bounce z-[101]">
+        <AlertTriangle size={80} className="text-yellow-500 mx-auto mb-6 animate-pulse" />
+        <h2 className="text-4xl font-black text-white uppercase tracking-tighter mb-4">
+          {warningMessage.type === 'trial' ? 'COURT SUMMONS' : 'SECURITY ALERT'}
+        </h2>
+        <p className="text-xl font-bold text-yellow-500 font-mono leading-relaxed mb-6">
+          {warningMessage.message}
+        </p>
+
+        {warningMessage.type === 'trial' ? (
+          <div className="mt-4">
+             <div className="text-2xl font-mono font-bold text-red-500 mb-2">BAN ACTIVE FOR</div>
+             <div className="text-5xl font-black text-white tracking-widest">
+               {Math.max(0, Math.ceil((warningMessage.expiresAt - now) / 1000))}s
+             </div>
+             <p className="text-gray-500 text-xs mt-4 uppercase tracking-widest animate-pulse">DO NOT CLOSE THIS WINDOW</p>
+          </div>
+        ) : (
+          <button 
+            onClick={() => setWarningMessage(null)}
+            className="bg-yellow-600 hover:bg-yellow-500 text-black font-black px-8 py-3 rounded text-lg uppercase tracking-widest transition-transform hover:scale-105"
+          >
+            ACKNOWLEDGE
+          </button>
+        )}
+      </div>
+    </div>
+  ) : null;
+
   // --- VIEW 1: PLAYER LOGIN ---
+
   if (view === 'login') {
     return (
       <div className="min-h-screen bg-gray-950 flex items-center justify-center p-4 font-sans">
@@ -344,13 +499,15 @@ function App() {
     )
   }
 
-  // --- VIEW 3: ADMIN PANEL ---
-  if (view === 'admin') {
-    const currentData = adminState || gameState;
-    const commodityNames = Object.keys(currentData.commodities);
+    // --- VIEW 3: ADMIN PANEL ---
+    if (view === 'admin') {
+      const currentData = adminState || gameState;
+      const commodityNames = Object.keys(currentData.commodities);
+  
+      return (
+        <div className="min-h-screen bg-black text-white font-mono p-6 relative">
+          {warningOverlay}
 
-    return (
-      <div className="min-h-screen bg-black text-white font-mono p-6">
         <div className="flex justify-between items-center mb-8 bg-gray-900/50 p-4 rounded-lg border border-red-900/30">
           <div className="flex items-center gap-3">
             <div className="h-3 w-3 bg-red-500 rounded-full animate-pulse"></div>
@@ -484,7 +641,7 @@ function App() {
                   <span className="font-mono text-emerald-400 text-right">{(c.askPrice || 0).toLocaleString()}</span>
                   <span className="font-mono text-gray-500 text-right">{c.spreadPct ? (c.spreadPct * 100).toFixed(1) : '?'}%</span>
                   <span className={`font-mono text-right ${c.available < 10 ? 'text-red-400' : 'text-gray-400'}`}>{c.available}/{c.total_supply}</span>
-                  <span className="flex justify-center"><Sparkline data={history.slice(-20)} width={80} height={24} /></span>
+                  <span className="flex justify-center"><PriceChart data={history.slice(-20)} width={80} height={24} timeframeTicks={20} /></span>
                   <span className="flex justify-center"><SentimentBadge pressure={pressure} /></span>
                 </div>
               );
@@ -498,36 +655,73 @@ function App() {
             <h2 className="text-lg font-bold text-gray-300 flex items-center gap-2"><Eye size={18} /> LIVE VALUATION FEED</h2>
           </div>
 
-          <div className="grid grid-cols-3 bg-gray-950 p-3 text-gray-500 text-xs font-bold uppercase tracking-wider">
+          <div className="grid grid-cols-4 bg-gray-950 p-3 text-gray-500 text-xs font-bold uppercase tracking-wider">
             <span>Nation Team</span>
             <span className="text-right">Liquid Cash</span>
+            <span className="text-right text-purple-400">Special</span>
             <span className="text-right">True Net Worth</span>
           </div>
 
           <div className="divide-y divide-gray-800">
             {Object.values(currentData.teams)
               .sort((a, b) => {
-                const valA = a.cash + Object.entries(a.portfolio).reduce((acc, [k, v]) => acc + (v * (currentData.commodities[k].bidPrice || currentData.commodities[k].price)), 0);
-                const valB = b.cash + Object.entries(b.portfolio).reduce((acc, [k, v]) => acc + (v * (currentData.commodities[k].bidPrice || currentData.commodities[k].price)), 0);
-                return valB - valA;
+                const getVal = (t) => t.cash + Object.entries(t.portfolio).reduce((acc, [k, v]) => {
+                   const price = (currentData.commodities[k].bidPrice || currentData.commodities[k].price);
+                   const mult = t.specialCommodity === k ? 1.2 : 1.0;
+                   return acc + (v * price * mult);
+                }, 0);
+                return getVal(b) - getVal(a);
               })
               .map(t => {
                 let totalVal = t.cash;
                 Object.entries(t.portfolio).forEach(([comm, qty]) => {
                   const price = currentData.commodities[comm].bidPrice || currentData.commodities[comm].price;
-                  totalVal += (qty * price);
+                  const mult = t.specialCommodity === comm ? 1.2 : 1.0;
+                  totalVal += (qty * price * mult);
                 });
 
                 return (
-                  <div key={t.id} className="grid grid-cols-3 p-4 hover:bg-gray-800/50 transition-colors items-center">
+                  <div key={t.id} className="grid grid-cols-4 p-4 hover:bg-gray-800/50 transition-colors items-center">
                     <span className="font-bold text-white text-lg">{t.name}</span>
                     <span className="font-mono text-gray-400 text-right">{t.cash.toLocaleString()}</span>
+                    <span className="font-mono text-purple-400 text-right text-xs uppercase">{t.specialCommodity || '-'}</span>
                     <span className="font-mono font-bold text-green-400 text-right text-xl">{totalVal.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
                   </div>
                 )
               })}
           </div>
         </div>
+
+        {/* TEAM SPECIAL COMMODITY SETTINGS */}
+        <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden mb-8">
+            <div className="p-4 border-b border-gray-800 bg-gray-800/50">
+               <h2 className="text-sm font-bold text-purple-400 flex items-center gap-2"><Zap size={16} /> SPECIAL COMMODITY ASSIGNMENT (1.2x Value)</h2>
+            </div>
+            <div className="p-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+               {Object.values(currentData.teams).map(t => (
+                  <div key={t.id} className="bg-black/40 p-3 rounded border border-gray-800 flex justify-between items-center">
+                     <span className="text-white font-bold text-sm">{t.name}</span>
+                     <select 
+                        className="bg-gray-900 text-gray-300 text-xs border border-gray-700 rounded p-1 outline-none focus:border-purple-500"
+                        value={t.specialCommodity || ""}
+                        onChange={(e) => {
+                           socket.emit('admin_action', { 
+                              type: 'SET_SPECIAL_COMMODITY', 
+                              teamId: t.id, 
+                              commodityName: e.target.value || null 
+                           });
+                        }}
+                     >
+                        <option value="">-- None --</option>
+                        {commodityNames.map(c => (
+                           <option key={c} value={c}>{c}</option>
+                        ))}
+                     </select>
+                  </div>
+               ))}
+            </div>
+        </div>
+
 
         {/* DANGER ZONE */}
         <div className="border-t border-gray-800 pt-8 mt-8 text-center">
@@ -544,27 +738,48 @@ function App() {
     );
   }
 
-  // --- VIEW 4: PLAYER DASHBOARD ---
-  const myTeam = gameState.teams[teamId];
+    // --- VIEW 4: PLAYER DASHBOARD ---
+    const myTeam = gameState.teams[teamId];
+  
+    // Calculate portfolio value at BID prices (realistic liquidation value)
+    let portfolioValue = myTeam.cash;
+    const holdingsBreakdown = [];
+    Object.entries(myTeam.portfolio).forEach(([comm, qty]) => {
+      if (qty > 0) {
+        const bidPrice = gameState.commodities[comm].bidPrice || gameState.commodities[comm].price;
+        // Apply Special Commodity Multiplier (1.2x)
+        const mult = myTeam.specialCommodity === comm ? 1.2 : 1.0;
+        const value = qty * bidPrice * mult;
+        
+        portfolioValue += value;
+        holdingsBreakdown.push({ 
+           name: comm, 
+           qty, 
+           value, 
+           isSpecial: myTeam.specialCommodity === comm 
+        });
+      }
+    });
+  
+    const timeframes = [
+      { label: '1m', ticks: 20 },
+      { label: '5m', ticks: 100 },
+      { label: '30m', ticks: 600 },
+      { label: '1h', ticks: 1200 },
+      { label: '2h', ticks: 2400 },
+      { label: '3h', ticks: 3600 },
+    ];
+  
+    return (
+      <div className="min-h-screen bg-gray-950 text-white p-4 font-sans pb-20 relative">
+        {warningOverlay}
+        
+        {/* NEWS TICKER */}
+        <NewsTicker events={gameState.activeEvents} broadcastNews={gameState.broadcastNews} tradeFeed={gameState.tradeFeed} />
 
-  // Calculate portfolio value at BID prices (realistic liquidation value)
-  let portfolioValue = myTeam.cash;
-  const holdingsBreakdown = [];
-  Object.entries(myTeam.portfolio).forEach(([comm, qty]) => {
-    if (qty > 0) {
-      const bidPrice = gameState.commodities[comm].bidPrice || gameState.commodities[comm].price;
-      const value = qty * bidPrice;
-      portfolioValue += value;
-      holdingsBreakdown.push({ name: comm, qty, value });
-    }
-  });
-
-  return (
-    <div className="min-h-screen bg-gray-950 text-white p-4 font-sans pb-20">
-      {/* NEWS TICKER */}
-      <NewsTicker events={gameState.activeEvents} broadcastNews={gameState.broadcastNews} tradeFeed={gameState.tradeFeed} />
 
       <header className="flex flex-col md:flex-row justify-between items-stretch gap-4 mb-6">
+
         <div className="bg-gray-900 p-6 rounded-xl border border-gray-800 shadow-xl flex-1 relative overflow-hidden">
           <div className="absolute top-0 right-0 p-4 opacity-10">
             <ShieldCheck size={100} />
@@ -577,9 +792,10 @@ function App() {
 
             <button
               onClick={handleLogout}
-              className="flex items-center gap-2 bg-gray-800 hover:bg-red-900/50 text-gray-400 hover:text-red-400 px-4 py-2 rounded-lg text-xs font-bold tracking-widest uppercase transition-all border border-transparent hover:border-red-900/50"
+              className="relative flex items-center gap-2 bg-gray-800 hover:bg-red-900/50 text-gray-400 hover:text-red-400 px-4 py-2 rounded-lg text-xs font-bold tracking-widest uppercase transition-all border border-transparent hover:border-red-900/50 cursor-pointer z-50"
             >
-              <LogOut size={14} /> Terminate
+              <LogOut size={14} className="pointer-events-none" /> 
+              <span className="pointer-events-none">Terminate</span>
             </button>
           </div>
         </div>
@@ -601,10 +817,11 @@ function App() {
           {holdingsBreakdown.length > 0 && (
             <div className="mt-2 pt-2 border-t border-gray-800/50 flex flex-wrap gap-x-3 gap-y-1">
               {holdingsBreakdown.map(h => (
-                <span key={h.name} className="text-[10px] text-gray-500">
-                  {h.name}: <span className="text-gray-300">{h.qty}</span> ({h.value.toLocaleString()})
+                <span key={h.name} className={`text-[10px] ${h.isSpecial ? 'text-purple-400 font-bold border border-purple-500/50 rounded px-1' : 'text-gray-500'}`}>
+                  {h.name}{h.isSpecial ? ' (★)' : ''}: <span className={h.isSpecial ? 'text-white' : 'text-gray-300'}>{h.qty}</span> ({h.value.toLocaleString()})
                 </span>
               ))}
+
             </div>
           )}
         </div>
@@ -615,6 +832,24 @@ function App() {
           <AlertTriangle /> MARKET CLOSED - TRADING SUSPENDED <AlertTriangle />
         </div>
       )}
+
+      <div className="flex justify-center mb-6">
+        <div className="inline-flex bg-gray-900 border border-gray-800 rounded-lg p-1">
+          {timeframes.map((tf) => (
+            <button
+              key={tf.label}
+              onClick={() => setChartTimeframe(tf.ticks)}
+              className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all ${
+                chartTimeframe === tf.ticks
+                  ? 'bg-blue-600 text-white shadow-lg'
+                  : 'text-gray-400 hover:text-white hover:bg-gray-800'
+              }`}
+            >
+              {tf.label}
+            </button>
+          ))}
+        </div>
+      </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {Object.values(gameState.commodities).map(comm => {
@@ -649,12 +884,13 @@ function App() {
                 <BidAskBar bidPrice={bidPrice} askPrice={askPrice} spreadPct={comm.spreadPct} />
               </div>
 
-              {/* SPARKLINE (last 20 ticks = 1 min) */}
+              {/* SPARKLINE (dynamic timeframe) */}
               {history.length >= 2 && (
                 <div className="bg-black/40 rounded-lg p-3 mb-3 border border-gray-800/50 flex items-center justify-center">
-                  <Sparkline data={history.slice(-20)} width={200} height={40} />
+                  <PriceChart data={history.slice(-chartTimeframe)} width={280} height={80} timeframeTicks={chartTimeframe} />
                 </div>
               )}
+
 
               <div className="bg-black/40 p-4 rounded-lg mb-4 flex justify-between items-center border border-gray-800/50">
                 <span className="text-gray-500 text-xs uppercase font-bold">Your Portfolio</span>

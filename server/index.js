@@ -22,7 +22,9 @@ const COMMODITIES = [
     { name: "Agri", basePrice: 500, total_supply: 200 },
     { name: "Livestock", basePrice: 600, total_supply: 150 },
     { name: "Rare Earth", basePrice: 3000, total_supply: 30 },
+    { name: "Arms and Ammunition", basePrice: 4000, total_supply: 25 },
 ];
+
 
 // Starting net worth target: 30,000 per team
 // Cash = 30000 - sum(holdings * basePrice)
@@ -57,7 +59,8 @@ const TEAMS_CONFIG = [
 
 // --- BID-ASK SPREAD ENGINE CONFIG ---
 const TICK_INTERVAL = 3000;
-const PRICE_HISTORY_LENGTH = 100; // 100 ticks * 3s = 5 minutes of history
+const PRICE_HISTORY_LENGTH = 3600; // 3600 ticks * 3s = 3 hours of history
+
 
 // Spread: percentage of midPrice. Wider when liquidity is low.
 const BASE_SPREAD_PCT = 0.02;       // 2% base spread at full liquidity
@@ -89,7 +92,10 @@ const NEWS_EVENTS = [
     { headline: "Lab-grown meat gains regulatory approval!", commodity: "Livestock", multiplier: 0.80, duration: 5 },
     { headline: "China restricts rare earth exports!", commodity: "Rare Earth", multiplier: 1.40, duration: 4 },
     { headline: "New rare earth deposits found in Scandinavia!", commodity: "Rare Earth", multiplier: 0.80, duration: 5 },
+    { headline: "Global conflict escalates, defense budgets soar!", commodity: "Arms and Ammunition", multiplier: 1.50, duration: 5 },
+    { headline: "Peace treaty signed! Defense spending cut.", commodity: "Arms and Ammunition", multiplier: 0.60, duration: 5 },
 ];
+
 
 // --- 2. GAME STATE ---
 let gameState = {
@@ -138,8 +144,10 @@ function resetGame() {
             id: t.id,
             name: t.name,
             cash: 0, // will be set in step 4
-            portfolio: {}
+            portfolio: {},
+            specialCommodity: null, // Admin sets this later
         };
+
         COMMODITIES.forEach(c => gameState.teams[t.id].portfolio[c.name] = 0);
 
         if (t.startHoldings) {
@@ -344,7 +352,15 @@ io.on('connection', (socket) => {
 
         if (!team || !market) return;
 
+        // CHECK IF BANNED
+        if (team.banExpires && Date.now() < team.banExpires) {
+             const remaining = Math.ceil((team.banExpires - Date.now()) / 1000);
+             socket.emit('error', `YOU ARE UNDER TRIAL! Trading suspended for ${remaining}s`);
+             return;
+        }
+
         // Validate quantity (1-10)
+
         quantity = Math.max(1, Math.min(10, Math.floor(quantity || 1)));
 
         if (type === 'BUY') {
@@ -367,12 +383,28 @@ io.on('connection', (socket) => {
             team.cash -= cost;
             team.portfolio[commodityName] += quantity;
             market.available -= quantity;
+            team.trades_this_phase[commodityName]++; // Increment by 1 trade, not by quantity
 
             // Track volume for sentiment display
             gameState.orderPressure[commodityName].buyVolume += quantity;
 
+            // SPECIAL RULE: ARMS EMBARGO
+            // If buying Arms and Ammunition and holding >= 4, trigger trial/ban
+            if (commodityName === "Arms and Ammunition" && team.portfolio[commodityName] >= 4) {
+                 const banDuration = 3 * 60 * 1000; // 3 minutes
+                 team.banExpires = Date.now() + banDuration;
+                 
+                 // Notify this specific team
+                 const warningMsg = "The court of Ecell condemns you to a trial as you have bought too much Arms and Ammunition!";
+                 socket.emit('trial_warning', { message: warningMsg, duration: banDuration });
+                 
+                 // Notify Admin
+                 io.emit('admin_alert', { team: team.name, message: `TRIAL TRIGGERED: ${team.name} bought >4 Arms. Banned for 3min.` });
+            }
+
             // Move midPrice UP based on trade impact
             applyTradeImpact(commodityName, quantity, true);
+
 
             // Trade feed notification
             gameState.tradeFeed.push({
@@ -398,9 +430,11 @@ io.on('connection', (socket) => {
             team.cash += revenue;
             team.portfolio[commodityName] -= quantity;
             market.available += quantity;
+            team.trades_this_phase[commodityName]++; // Increment by 1 trade, not by quantity
 
             // Track volume for sentiment display
             gameState.orderPressure[commodityName].sellVolume += quantity;
+
 
             // Move midPrice DOWN based on trade impact
             applyTradeImpact(commodityName, quantity, false);
@@ -413,6 +447,7 @@ io.on('connection', (socket) => {
             });
             if (gameState.tradeFeed.length > 20) gameState.tradeFeed = gameState.tradeFeed.slice(-20);
         }
+
 
         io.emit('update_state', sanitizeStateForPlayer(gameState));
         io.emit('update_admin_state', JSON.parse(JSON.stringify(gameState)));
@@ -427,8 +462,10 @@ io.on('connection', (socket) => {
         switch (action.type) {
             case 'OPEN_MARKET':
                 gameState.marketOpen = true;
+                Object.values(gameState.teams).forEach(t => t.trades_this_phase = {});
                 startTickTimer();
                 break;
+
             case 'CLOSE_MARKET':
                 gameState.marketOpen = false;
                 stopTickTimer();
@@ -496,9 +533,15 @@ io.on('connection', (socket) => {
                     adminState: JSON.parse(JSON.stringify(gameState)),
                 });
                 return; // skip the normal emit below — game_reset handles it
+            case 'SET_SPECIAL_COMMODITY':
+                if (action.teamId && gameState.teams[action.teamId]) {
+                    gameState.teams[action.teamId].specialCommodity = action.commodityName || null;
+                }
+                break;
         }
 
         io.emit('update_state', sanitizeStateForPlayer(gameState));
+
         io.emit('update_admin_state', JSON.parse(JSON.stringify(gameState)));
     });
 });
