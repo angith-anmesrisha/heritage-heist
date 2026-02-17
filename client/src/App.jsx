@@ -323,7 +323,7 @@ function App() {
     });
 
     socket.on('admin_alert', ({ team, message }) => {
-       const audio = new Audio('/admin_alert.mp3'); 
+       const audio = new Audio('/trial_siren.mp3'); 
        audio.play().catch(e => console.log("Audio play failed", e));
        // Admin alerts still clear after 5s or when acknowledged
        setWarningMessage({ message: `⚠️ ${message}`, type: 'admin', expiresAt: Date.now() + 5000 });
@@ -692,35 +692,66 @@ function App() {
           </div>
         </div>
 
-        {/* TEAM SPECIAL COMMODITY SETTINGS */}
+        {/* TEAM MANAGEMENT & SPECIAL COMMODITIES */}
         <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden mb-8">
             <div className="p-4 border-b border-gray-800 bg-gray-800/50">
-               <h2 className="text-sm font-bold text-purple-400 flex items-center gap-2"><Zap size={16} /> SPECIAL COMMODITY ASSIGNMENT (1.2x Value)</h2>
+               <h2 className="text-sm font-bold text-gray-300 flex items-center gap-2"><Zap size={16} /> TEAM MANAGEMENT</h2>
             </div>
-            <div className="p-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="p-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                {Object.values(currentData.teams).map(t => (
-                  <div key={t.id} className="bg-black/40 p-3 rounded border border-gray-800 flex justify-between items-center">
-                     <span className="text-white font-bold text-sm">{t.name}</span>
-                     <select 
-                        className="bg-gray-900 text-gray-300 text-xs border border-gray-700 rounded p-1 outline-none focus:border-purple-500"
-                        value={t.specialCommodity || ""}
-                        onChange={(e) => {
-                           socket.emit('admin_action', { 
-                              type: 'SET_SPECIAL_COMMODITY', 
-                              teamId: t.id, 
-                              commodityName: e.target.value || null 
-                           });
-                        }}
-                     >
-                        <option value="">-- None --</option>
-                        {commodityNames.map(c => (
-                           <option key={c} value={c}>{c}</option>
-                        ))}
-                     </select>
+                  <div key={t.id} className="bg-black/40 p-4 rounded-lg border border-gray-800 space-y-3 relative group hover:border-blue-500/30 transition-colors">
+                     <div className="flex justify-between items-center border-b border-gray-800 pb-2 mb-2">
+                         <span className="text-white font-bold text-sm tracking-tight">{t.name}</span>
+                         <span className={`font-mono text-xs font-bold ${t.cash >= 0 ? 'text-green-400' : 'text-red-400'}`}>{t.cash.toLocaleString()}</span>
+                     </div>
+                     
+                     {/* SPECIAL COMMODITY */}
+                     <div className="space-y-1">
+                         <label className="text-[9px] text-purple-400 uppercase font-bold tracking-wider">Special Commodity (1.2x)</label>
+                         <select 
+                            className="w-full bg-gray-900 text-gray-300 text-xs border border-gray-700 rounded p-1.5 outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500/50 transition-all"
+                            value={t.specialCommodity || ""}
+                            onChange={(e) => {
+                               socket.emit('admin_action', { 
+                                  type: 'SET_SPECIAL_COMMODITY', 
+                                  teamId: t.id, 
+                                  commodityName: e.target.value || null 
+                               });
+                            }}
+                         >
+                            <option value="">-- None --</option>
+                            {commodityNames.map(c => (
+                               <option key={c} value={c}>{c}</option>
+                            ))}
+                         </select>
+                     </div>
+
+                     {/* CASH ADJUSTMENT */}
+                     <div className="space-y-1">
+                         <label className="text-[9px] text-blue-400 uppercase font-bold tracking-wider">Adjust Cash Fund</label>
+                         <div className="relative">
+                             <input 
+                                type="number" 
+                                placeholder="+/- Amount (Enter)"
+                                className="w-full bg-black border border-gray-700 text-white px-2 py-1.5 rounded text-xs focus:border-blue-500 outline-none pr-8"
+                                onKeyDown={(e) => {
+                                    if(e.key === 'Enter') {
+                                        const val = parseInt(e.target.value);
+                                        if(!isNaN(val) && val !== 0) {
+                                            socket.emit('admin_action', { type: 'ADJUST_CASH', teamId: t.id, amount: val });
+                                            e.target.value = '';
+                                        }
+                                    }
+                                }}
+                             />
+                             <div className="absolute right-2 top-1.5 text-gray-600 pointer-events-none text-[10px]">↵</div>
+                         </div>
+                     </div>
                   </div>
                ))}
             </div>
         </div>
+
 
 
         {/* DANGER ZONE */}

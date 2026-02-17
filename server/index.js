@@ -22,7 +22,7 @@ const COMMODITIES = [
     { name: "Agri", basePrice: 500, total_supply: 200 },
     { name: "Livestock", basePrice: 600, total_supply: 150 },
     { name: "Rare Earth", basePrice: 3000, total_supply: 30 },
-    { name: "Arms and Ammunition", basePrice: 4000, total_supply: 25 },
+    { name: "Arms and Ammunition", basePrice: 3500, total_supply: 25 },
 ];
 
 
@@ -31,31 +31,20 @@ const COMMODITIES = [
 const TARGET_NET_WORTH = 30000;
 
 const TEAMS_CONFIG = [
-    { id: "usa", name: "USA", password: process.env.PASSWORD_USA,
-      startHoldings: { "Gold": 2, "Platinum": 3, "Oil": 3, "Copper": 2 } },
-    { id: "china", name: "China", password: process.env.PASSWORD_CHINA,
-      startHoldings: { "Rare Earth": 5, "Copper": 4, "Silver": 2, "Agri": 3 } },
-    { id: "india", name: "India", password: process.env.PASSWORD_INDIA,
-      startHoldings: { "Agri": 5, "Livestock": 2, "Silver": 2, "Copper": 2 } },
-    { id: "saudi", name: "Saudi Arabia", password: process.env.PASSWORD_SAUDI,
-      startHoldings: { "Oil": 6, "Gold": 2 } },
-    { id: "uk", name: "UK", password: process.env.PASSWORD_UK,
-      startHoldings: { "Gold": 3, "Platinum": 2, "Silver": 2 } },
-    { id: "germany", name: "Germany", password: process.env.PASSWORD_GERMANY,
-      startHoldings: { "Silver": 3, "Copper": 3, "Platinum": 2 } },
-    { id: "japan", name: "Japan", password: process.env.PASSWORD_JAPAN,
-      startHoldings: { "Copper": 4, "Rare Earth": 2, "Silver": 2 } },
-    { id: "russia", name: "Russia", password: process.env.PASSWORD_RUSSIA,
-      startHoldings: { "Oil": 5, "Gold": 2, "Rare Earth": 2 } },
-    { id: "brazil", name: "Brazil", password: process.env.PASSWORD_BRAZIL,
-      startHoldings: { "Livestock": 4, "Agri": 3, "Copper": 2 } },
-    { id: "france", name: "France", password: process.env.PASSWORD_FRANCE,
-      startHoldings: { "Gold": 3, "Agri": 2, "Livestock": 2 } },
-    { id: "uae", name: "UAE", password: process.env.PASSWORD_UAE,
-      startHoldings: { "Oil": 4, "Gold": 3 } },
-    { id: "australia", name: "Australia", password: process.env.PASSWORD_AUSTRALIA,
-      startHoldings: { "Rare Earth": 3, "Gold": 2, "Livestock": 2, "Copper": 2 } },
+    { id: "usa", name: "USA", password: process.env.PASSWORD_USA },
+    { id: "china", name: "China", password: process.env.PASSWORD_CHINA },
+    { id: "india", name: "India", password: process.env.PASSWORD_INDIA },
+    { id: "saudi", name: "Saudi Arabia", password: process.env.PASSWORD_SAUDI },
+    { id: "uk", name: "UK", password: process.env.PASSWORD_UK },
+    { id: "germany", name: "Germany", password: process.env.PASSWORD_GERMANY },
+    { id: "japan", name: "Japan", password: process.env.PASSWORD_JAPAN },
+    { id: "russia", name: "Russia", password: process.env.PASSWORD_RUSSIA },
+    { id: "brazil", name: "Brazil", password: process.env.PASSWORD_BRAZIL },
+    { id: "france", name: "France", password: process.env.PASSWORD_FRANCE },
+    { id: "uae", name: "UAE", password: process.env.PASSWORD_UAE },
+    { id: "australia", name: "Australia", password: process.env.PASSWORD_AUSTRALIA },
 ];
+
 
 // --- BID-ASK SPREAD ENGINE CONFIG ---
 const TICK_INTERVAL = 3000;
@@ -536,6 +525,14 @@ io.on('connection', (socket) => {
             case 'SET_SPECIAL_COMMODITY':
                 if (action.teamId && gameState.teams[action.teamId]) {
                     gameState.teams[action.teamId].specialCommodity = action.commodityName || null;
+                }
+                break;
+            case 'ADJUST_CASH':
+                if (action.teamId && gameState.teams[action.teamId]) {
+                    const amount = parseInt(action.amount, 10);
+                    if (!isNaN(amount)) {
+                        gameState.teams[action.teamId].cash += amount;
+                    }
                 }
                 break;
         }
