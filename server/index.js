@@ -127,27 +127,35 @@ function resetGame() {
         gameState.orderPressure[c.name] = { buyVolume: 0, sellVolume: 0 };
     });
 
+
     // Step 2: Initialize teams and assign holdings (reduce available supply)
     TEAMS_CONFIG.forEach(t => {
         gameState.teams[t.id] = {
             id: t.id,
             name: t.name,
             cash: 0, // will be set in step 4
-            portfolio: {},
+            portfolio: {}, // { "Gold": { qty: 0, avgPrice: 0, realizedPnL: 0, totalCostSold: 0 }, ... }
             specialCommodity: null, // Admin sets this later
         };
 
-        COMMODITIES.forEach(c => gameState.teams[t.id].portfolio[c.name] = 0);
+        COMMODITIES.forEach(c => gameState.teams[t.id].portfolio[c.name] = { qty: 0, avgPrice: 0, realizedPnL: 0, totalCostSold: 0 });
 
         if (t.startHoldings) {
             Object.entries(t.startHoldings).forEach(([commName, qty]) => {
                 const market = gameState.commodities[commName];
                 if (market && market.available >= qty) {
-                    gameState.teams[t.id].portfolio[commName] = qty;
+                    // Initial holdings are assumed bought at basePrice
+                    gameState.teams[t.id].portfolio[commName] = { 
+                        qty: qty, 
+                        avgPrice: market.basePrice,
+                        realizedPnL: 0, 
+                        totalCostSold: 0 
+                    };
                     market.available -= qty;
                 }
             });
         }
+
     });
 
     // Step 3: Recalculate bid/ask with correct available supply
@@ -156,15 +164,16 @@ function resetGame() {
     // Step 4: Set cash so that cash + sum(holdings * bidPrice) = TARGET exactly
     TEAMS_CONFIG.forEach(t => {
         let holdingsValue = 0;
-        Object.entries(gameState.teams[t.id].portfolio).forEach(([commName, qty]) => {
-            if (qty > 0) {
-                holdingsValue += qty * gameState.commodities[commName].bidPrice;
+        Object.entries(gameState.teams[t.id].portfolio).forEach(([commName, data]) => {
+            if (data.qty > 0) {
+                holdingsValue += data.qty * gameState.commodities[commName].bidPrice;
             }
         });
         gameState.teams[t.id].cash = TARGET_NET_WORTH - holdingsValue;
     });
 
     if (tickTimer) {
+
         clearInterval(tickTimer);
         tickTimer = null;
     }
@@ -363,14 +372,25 @@ io.on('connection', (socket) => {
             if (team.cash < cost) { socket.emit('error', 'Insufficient Funds'); return; }
 
             // Anti-monopoly: can't hold > 40% of total supply
-            if ((team.portfolio[commodityName] + quantity) > (market.total_supply * 0.40)) {
+            if ((team.portfolio[commodityName].qty + quantity) > (market.total_supply * 0.40)) {
                 socket.emit('error', 'Anti-Monopoly Rule: >40% Supply');
                 return;
             }
 
             // EXECUTE BUY
             team.cash -= cost;
-            team.portfolio[commodityName] += quantity;
+            
+            // Calculate Weighted Average Price
+            const currentHoldings = team.portfolio[commodityName];
+            const oldTotalCost = currentHoldings.qty * currentHoldings.avgPrice;
+            const newTotalCost = oldTotalCost + cost;
+            const newTotalQty = currentHoldings.qty + quantity;
+            
+            team.portfolio[commodityName] = {
+                qty: newTotalQty,
+                avgPrice: Math.round(newTotalCost / newTotalQty)
+            };
+
             market.available -= quantity;
             team.trades_this_phase[commodityName]++; // Increment by 1 trade, not by quantity
 
@@ -379,9 +399,10 @@ io.on('connection', (socket) => {
 
             // SPECIAL RULE: ARMS EMBARGO
             // If buying Arms and Ammunition and holding >= 4, trigger trial/ban
-            if (commodityName === "Arms and Ammunition" && team.portfolio[commodityName] >= 4) {
+            if (commodityName === "Arms and Ammunition" && team.portfolio[commodityName].qty >= 4) {
                  const banDuration = 3 * 60 * 1000; // 3 minutes
                  team.banExpires = Date.now() + banDuration;
+
                  
                  // Notify this specific team
                  const warningMsg = "The court of Ecell condemns you to a trial as you have bought too much Arms and Ammunition!";
@@ -406,20 +427,36 @@ io.on('connection', (socket) => {
         } else if (type === 'SELL') {
             // Clamp sell quantity to actual holdings
             const held = team.portfolio[commodityName];
-            if (held <= 0) {
+            if (held.qty <= 0) {
                 socket.emit('error', 'No units to sell');
                 return;
             }
-            if (quantity > held) quantity = held;
+            if (quantity > held.qty) quantity = held.qty;
 
             // Seller receives the BID price (lower side of spread)
             const revenue = market.bidPrice * quantity;
 
             // EXECUTE SELL
             team.cash += revenue;
-            team.portfolio[commodityName] -= quantity;
+            team.portfolio[commodityName].qty -= quantity;
+            
+            // CALCULATE REALIZED P&L
+            const avgBuyPrice = team.portfolio[commodityName].avgPrice;
+            const costBasisOfSale = quantity * avgBuyPrice;
+            const profit = revenue - costBasisOfSale;
+
+            team.portfolio[commodityName].realizedPnL += profit;
+            team.portfolio[commodityName].totalCostSold += costBasisOfSale;
+
+            // If sold out, reset avg price to 0 (optional, but cleaner)
+            if (team.portfolio[commodityName].qty === 0) {
+                team.portfolio[commodityName].avgPrice = 0;
+            }
+
+
             market.available += quantity;
             team.trades_this_phase[commodityName]++; // Increment by 1 trade, not by quantity
+
 
             // Track volume for sentiment display
             gameState.orderPressure[commodityName].sellVolume += quantity;

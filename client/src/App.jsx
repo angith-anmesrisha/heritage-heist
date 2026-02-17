@@ -665,19 +665,19 @@ function App() {
           <div className="divide-y divide-gray-800">
             {Object.values(currentData.teams)
               .sort((a, b) => {
-                const getVal = (t) => t.cash + Object.entries(t.portfolio).reduce((acc, [k, v]) => {
+                const getVal = (t) => t.cash + Object.entries(t.portfolio).reduce((acc, [k, data]) => {
                    const price = (currentData.commodities[k].bidPrice || currentData.commodities[k].price);
                    const mult = t.specialCommodity === k ? 1.2 : 1.0;
-                   return acc + (v * price * mult);
+                   return acc + (data.qty * price * mult);
                 }, 0);
                 return getVal(b) - getVal(a);
               })
               .map(t => {
                 let totalVal = t.cash;
-                Object.entries(t.portfolio).forEach(([comm, qty]) => {
+                Object.entries(t.portfolio).forEach(([comm, data]) => {
                   const price = currentData.commodities[comm].bidPrice || currentData.commodities[comm].price;
                   const mult = t.specialCommodity === comm ? 1.2 : 1.0;
-                  totalVal += (qty * price * mult);
+                  totalVal += (data.qty * price * mult);
                 });
 
                 return (
@@ -690,6 +690,7 @@ function App() {
                 )
               })}
           </div>
+
         </div>
 
         {/* TEAM MANAGEMENT & SPECIAL COMMODITIES */}
@@ -775,22 +776,33 @@ function App() {
     // Calculate portfolio value at BID prices (realistic liquidation value)
     let portfolioValue = myTeam.cash;
     const holdingsBreakdown = [];
-    Object.entries(myTeam.portfolio).forEach(([comm, qty]) => {
-      if (qty > 0) {
-        const bidPrice = gameState.commodities[comm].bidPrice || gameState.commodities[comm].price;
-        // Apply Special Commodity Multiplier (1.2x)
-        const mult = myTeam.specialCommodity === comm ? 1.2 : 1.0;
-        const value = qty * bidPrice * mult;
-        
-        portfolioValue += value;
-        holdingsBreakdown.push({ 
-           name: comm, 
-           qty, 
-           value, 
-           isSpecial: myTeam.specialCommodity === comm 
-        });
-      }
-    });
+    
+    // Safely access portfolio entries
+    if (myTeam && myTeam.portfolio) {
+      Object.entries(myTeam.portfolio).forEach(([comm, data]) => {
+        // data is now { qty: number, avgPrice: number }
+        // Ensure data is valid object, fallback if server hasn't updated yet for existing sessions
+        const qty = typeof data === 'object' ? data.qty : data;
+        const avgPrice = typeof data === 'object' ? data.avgPrice : 0;
+
+        if (qty > 0) {
+          const bidPrice = gameState.commodities[comm].bidPrice || gameState.commodities[comm].price;
+          // Apply Special Commodity Multiplier (1.2x)
+          const mult = myTeam.specialCommodity === comm ? 1.2 : 1.0;
+          const value = qty * bidPrice * mult;
+          
+          portfolioValue += value;
+          holdingsBreakdown.push({ 
+             name: comm, 
+             qty, 
+             value,
+             avgPrice,
+             isSpecial: myTeam.specialCommodity === comm 
+          });
+        }
+      });
+    }
+
   
     const timeframes = [
       { label: '1m', ticks: 20 },
@@ -887,13 +899,36 @@ function App() {
           const history = gameState.priceHistory?.[comm.name] || [];
           const pressure = gameState.orderPressure?.[comm.name];
           const qty = getQty(comm.name);
-          const held = myTeam.portfolio[comm.name] || 0;
+          // Handle new data structure { qty, avgPrice, realizedPnL, totalCostSold } vs legacy/fallback
+          const portfolioData = myTeam.portfolio[comm.name] || { qty: 0, avgPrice: 0, realizedPnL: 0, totalCostSold: 0 };
+          const held = typeof portfolioData === 'object' ? portfolioData.qty : portfolioData;
+          const avgBuyPrice = typeof portfolioData === 'object' ? portfolioData.avgPrice : 0;
+          const realizedPnL = typeof portfolioData === 'object' ? (portfolioData.realizedPnL || 0) : 0;
+          const totalCostSold = typeof portfolioData === 'object' ? (portfolioData.totalCostSold || 0) : 0;
+
           const sellQty = Math.min(qty, held);
           const askPrice = comm.askPrice || comm.price;
           const bidPrice = comm.bidPrice || comm.price;
 
+          // Calculate Unrealized Return (Current Holdings)
+          let unrealizedReturnVal = 0;
+          let unrealizedReturnPct = 0;
+          if (held > 0 && avgBuyPrice > 0) {
+             const currentVal = held * bidPrice;
+             const investedVal = held * avgBuyPrice;
+             unrealizedReturnVal = currentVal - investedVal;
+             unrealizedReturnPct = (unrealizedReturnVal / investedVal) * 100;
+          }
+
+          // Calculate Realized Return (Trading History)
+          let realizedReturnPct = 0;
+          if (totalCostSold > 0) {
+              realizedReturnPct = (realizedPnL / totalCostSold) * 100;
+          }
+
           return (
             <div key={comm.name} className="relative bg-gray-900 rounded-xl p-6 border border-gray-800 shadow-lg hover:border-gray-700 transition-all hover:-translate-y-1 group">
+
 
               <div className="flex justify-between items-start mb-3 border-b border-gray-800 pb-3">
                 <div>
@@ -923,10 +958,29 @@ function App() {
               )}
 
 
-              <div className="bg-black/40 p-4 rounded-lg mb-4 flex justify-between items-center border border-gray-800/50">
-                <span className="text-gray-500 text-xs uppercase font-bold">Your Portfolio</span>
-                <span className="font-mono font-bold text-xl text-white">{myTeam.portfolio[comm.name]} <span className="text-xs text-gray-600 font-normal">qty</span></span>
+              <div className="bg-black/40 p-4 rounded-lg mb-4 border border-gray-800/50">
+                <div className="flex justify-between items-center mb-1">
+                    <span className="text-gray-500 text-xs uppercase font-bold">Your Portfolio</span>
+                    <span className="font-mono font-bold text-xl text-white">{held} <span className="text-xs text-gray-600 font-normal">qty</span></span>
+                </div>
+                
+                {/* Average Return Display */}
+                {held > 0 && (
+                    <div className="flex justify-between items-center border-t border-gray-800 pt-2 mt-2">
+                        <div className="flex flex-col">
+                            <span className="text-[9px] text-gray-500 uppercase">Avg Buy Price</span>
+                            <span className="text-xs font-mono text-gray-300">{avgBuyPrice.toLocaleString()}</span>
+                        </div>
+                        <div className="flex flex-col items-end">
+                            <span className="text-[9px] text-gray-500 uppercase">Return</span>
+                            <span className={`text-xs font-mono font-bold ${unrealizedReturnVal >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                {unrealizedReturnVal > 0 ? '+' : ''}{unrealizedReturnVal.toLocaleString()} ({unrealizedReturnPct.toFixed(1)}%)
+                            </span>
+                        </div>
+                    </div>
+                )}
               </div>
+
 
               {/* QUANTITY SELECTOR */}
               <div className="flex items-center justify-between mb-4">
